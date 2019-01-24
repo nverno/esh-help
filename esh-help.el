@@ -1,9 +1,9 @@
-;;; esh-help.el --- Add some help functions and support for Eshell
+;;; esh-help.el --- Add some help functions and support for Eshell -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2013, 2014 by Tomoya Tanjo
 
 ;; Author: Tomoya Tanjo <ttanjo@gmail.com>
-;; URL: https://github.com/tom-tan/esh-help/
+;; URL: https://github.com/nverno/esh-help/
 ;; Package-Requires: ((dash "1.4.0"))
 ;; Keywords: eshell, extensions
 
@@ -28,101 +28,90 @@
 ;;
 ;; To use this package, add these lines to your .emacs file:
 ;;     (require 'esh-help)
-;;     (setup-esh-help-eldoc)  ;; To use eldoc in Eshell
+;;     (esh-help-eldoc-setup)  ;; To use eldoc in Eshell
 ;; And by using M-x eldoc-mode in Eshell, you can see help strings
 ;; for the pointed command in minibuffer.
 ;; And by using M-x esh-help-run-help, you can see full help string
 ;; for the command.
 
 ;;; Code:
-
+(eval-when-compile
+  (require 'dash)
+  (defvar manual-program))
 (require 'esh-cmd)
 (require 'esh-mode)
 (require 'em-unix)
 (require 'esh-ext)
 (require 'eldoc)
-(require 'env)
-(require 'dash)
-(require 'man)
+
+(declare-function man "man")
 
 ;;;###autoload
-(defun setup-esh-help-eldoc ()
+(defun esh-help-eldoc-setup ()
   "Setup eldoc function for Eshell."
-  (interactive)
-  (add-hook 'eshell-mode-hook
-            (lambda ()
-              (make-local-variable 'eldoc-documentation-function)
-              (setq eldoc-documentation-function
-                    'esh-help-eldoc-command))))
+  (add-function :before-until (local 'eldoc-documentation-function)
+                #'esh-help-eldoc-command))
 
 ;;;###autoload
 (defun esh-help-run-help (cmd)
   "Show help for the pointed command or functions CMD.
 It comes from Zsh."
-  (interactive
-   (list (esh-help-pointed-symbol)))
+  (interactive (list (esh-help-pointed-symbol)))
   (cond
-    ((eshell-find-alias-function cmd)
-     (describe-function (eshell-find-alias-function cmd)))
-    ((string-match-p "^\\*." cmd)
-     (man (substring cmd 1)))
-    ((eshell-search-path cmd) (man cmd))
-    ((functionp (intern cmd)) (describe-function (intern cmd)))))
+   ((eshell-find-alias-function cmd)
+    (describe-function (eshell-find-alias-function cmd)))
+   ((string-match-p "^\\*." cmd)
+    (man (substring cmd 1)))
+   ((eshell-search-path cmd) (man cmd))
+   ((functionp (intern cmd)) (describe-function (intern cmd)))))
 
 (defun esh-help-pointed-symbol ()
   "Return the symbol to show the help string."
-  (let ((bol (save-excursion
-               (eshell-bol)
-               (point)))
-        (eol (save-excursion
-               (move-end-of-line nil)
-               (point))))
-    (when (<= bol (point))
-      (save-excursion
+  (save-excursion
+    (let ((curr (point))
+          (bol (eshell-beginning-of-input))
+          (eol (point-at-eol)))
+      (when (<= bol curr)
+        (goto-char curr)
         (--if-let (re-search-backward "|" bol t)
-          (forward-char)
+            (forward-char)
           (eshell-bol))
         (--when-let (re-search-forward "[^\s]+" eol t)
           (goto-char it)
           (current-word))))))
 
 (defalias 'esh-help--get-fnsym-args-string
-    (if (fboundp 'eldoc-get-fnsym-args-string)
-        #'eldoc-get-fnsym-args-string
-      #'elisp-get-fnsym-args-string)
+  (if (fboundp 'eldoc-get-fnsym-args-string)
+      #'eldoc-get-fnsym-args-string
+    #'elisp-get-fnsym-args-string)
   "eldoc-get-fnsym-args-string is no longer defined in Emacs 25")
 
 (defun esh-help-eldoc-help-string (cmd)
   "Return minibuffer help string for CMD."
   (cond
-    ((string-match-p "^[/.]" cmd) nil)
-    ((eshell-find-alias-function cmd)
-     (esh-help--get-fnsym-args-string (eshell-find-alias-function cmd)))
-    ((string-match-p "^\\*." cmd)
-     (esh-help-eldoc-man-minibuffer-string (substring cmd 1)))
-    ((eshell-search-path cmd) (esh-help-eldoc-man-minibuffer-string cmd))
-    ((functionp (intern cmd)) (esh-help--get-fnsym-args-string (intern cmd)))))
+   ((string-match-p "^[/.]" cmd) nil)
+   ((eshell-find-alias-function cmd)
+    (esh-help--get-fnsym-args-string (eshell-find-alias-function cmd)))
+   ((string-match-p "^\\*." cmd)
+    (esh-help-eldoc-man-minibuffer-string (substring cmd 1)))
+   ((eshell-search-path cmd) (esh-help-eldoc-man-minibuffer-string cmd))
+   ((functionp (intern cmd)) (esh-help--get-fnsym-args-string (intern cmd)))))
 
 (defun esh-help-man-string (cmd)
   "Return help string for the shell command CMD."
-  (let ((lang (getenv "LANG")))
-    (setenv "LANG" "C")
-    (let ((str (shell-command-to-string (format "%s %s | col -b"
-                                                manual-program cmd))))
-      (setenv "LANG" lang)
-      str)))
+  (let ((process-environment (cons "LANG=C" process-environment)))
+    (shell-command-to-string (format "%s %s | col -b" manual-program cmd))))
 
 (defun esh-help-eldoc-man-minibuffer-string (cmd)
   "Return minibuffer help string for the shell command CMD."
   (let ((str (split-string (esh-help-man-string cmd) "\n")))
-    (unless (equal (concat "No manual entry for " cmd)
-                   (car str))
+    (unless (equal (concat "No manual entry for " cmd) (car str))
       (->> str
-        (--drop-while (not (string-match-p "^SYNOPSIS$" it)))
-        (nth 1)
-        (funcall (lambda (s)
-                   (let ((idx (string-match "[^\s\t]" s)))
-                     (substring s idx))))))))
+           (--drop-while (not (string-match-p "^SYNOPSIS$" it)))
+           (nth 1)
+           (funcall (lambda (s)
+                      (let ((idx (string-match "[^\s\t]" s)))
+                        (substring s idx))))))))
 
 (defun esh-help-eldoc-command ()
   "Return eldoc string for the pointed symbol."
