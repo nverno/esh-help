@@ -3,7 +3,7 @@
 ;; Copyright (C) 2013, 2014 by Tomoya Tanjo
 
 ;; Author: Tomoya Tanjo <ttanjo@gmail.com>
-;; URL: https://github.com/nverno/esh-help/
+;; URL: https://github.com/nverno/esh-help
 ;; Package-Requires: ((dash "1.4.0"))
 ;; Keywords: eshell, extensions
 
